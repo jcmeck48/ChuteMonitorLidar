@@ -1,0 +1,65 @@
+﻿<!doctype html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Chute Monitor</title>
+    <style>
+        body { font-family: Segoe UI, Arial, sans-serif; margin: 0; padding: 20px; background: #f5f5f5; }
+        .container { max-width: 800px; margin: 0 auto; background: #fff; border-radius: 10px; padding: 24px; box-shadow: 0 2px 10px rgba(0,0,0,.1); }
+        .status-card { border-left: 4px solid #007bff; padding: 16px; border-radius: 8px; background: #f8f9fa; margin-bottom: 16px; }
+        .status-empty { border-left-color: #28a745; } .status-not-full { border-left-color: #ffc107; }
+        .status-full { border-left-color: #fd7e14; } .status-needs-attention { border-left-color: #dc3545; }
+        .controls { display: grid; grid-template-columns: repeat(auto-fit,minmax(180px,1fr)); gap: 10px; margin: 16px 0; }
+        button { padding: 10px 14px; border: 0; border-radius: 6px; cursor: pointer; }
+        .primary { background:#007bff; color:#fff; } .success { background:#28a745; color:#fff; }
+        .warn { background:#ffc107; color:#000; } .muted { background:#6c757d; color:#fff; } .danger { background:#dc3545; color:#fff; }
+        .config { background:#f8f9fa; border-radius:8px; padding:16px; } label { font-weight:600; display:block; margin:8px 0 4px; }
+        input { width:100%; padding:8px; } .log { background:#f8f9fa; border-radius:8px; padding:12px; margin-top:16px; font-family:monospace; max-height:200px; overflow:auto; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>Chute Monitor</h1>
+    <div id="card" class="status-card">
+        <div id="title" style="font-weight:700;font-size:20px;">Loading...</div>
+        <div id="details" style="color:#555;"></div>
+    </div>
+    <div class="controls">
+        <button class="primary" onclick="scan()">Single Scan</button>
+        <button class="success" onclick="calEmpty()">Calibrate Empty</button>
+        <button class="warn" onclick="calFull()">Calibrate Full</button>
+        <button class="danger" onclick="clearCal()">Clear Calibration</button>
+        <button id="monBtn" class="muted" onclick="toggleMon()">Start Monitoring</button>
+    </div>
+    <div class="config">
+        <h3>Configuration</h3>
+        <label>Scan Interval (s)</label><input type="number" id="scanInt" min="1" value="1">
+        <label>Inference Threshold</label><input type="number" id="infThresh" min="1" value="3">
+        <label>Full Threshold (%)</label><input type="number" id="fullThresh" min="10" max="100" value="80">
+        <div style="margin-top:10px;"><button class="primary" onclick="saveCfg()">Save Config</button></div>
+        
+        <h3>Calibration Status</h3>
+        <div id="calStatus" style="background:#f8f9fa; padding:10px; border-radius:5px; margin:10px 0;">
+            <div><strong>Calibrated:</strong> <span id="calibrated">Loading...</span></div>
+        <div><strong>Empty Distance:</strong> <span id="emptyDist">Loading...</span> inches</div>
+        <div><strong>Full Distance:</strong> <span id="fullDist">Loading...</span> inches</div>
+        </div>
+    </div>
+    <div class="log" id="log"></div>
+</div>
+<script>
+let monitoring=false; setInterval(update, 2000); update(); loadCfg();
+function log(m){const d=document.getElementById('log');d.innerHTML+=m+'<br>';d.scrollTop=d.scrollHeight;}
+function emoji(s){const m={empty:'🟢',not_full:'🟡',full:'🟠',needs_attention:'🔴',unknown:'⚪'};return m[s]||'❓';}
+function update(){fetch('/api/status').then(r=>r.json()).then(s=>{const c=document.getElementById('card');c.className='status-card status-'+s.status.replace('_','-');document.getElementById('title').textContent=emoji(s.status)+' '+s.status.toUpperCase();document.getElementById('details').innerHTML=`Distance: ${s.raw_distance.toFixed(2)} inches<br>Confidence: ${(s.confidence*100).toFixed(0)}%<br>Consecutive Full: ${s.consecutive_full_readings}`;monitoring=s.running;const b=document.getElementById('monBtn');b.textContent=monitoring?'Stop Monitoring':'Start Monitoring';b.className=monitoring?'danger':'muted';}).catch(e=>log('status err: '+e));}
+function scan(){fetch('/api/scan').then(r=>r.json()).then(s=>{log('scan: '+s.status+' '+s.raw_distance.toFixed(2)+' inches');update();}).catch(e=>log('scan err: '+e));}
+function calEmpty(){fetch('/api/calibrate/empty',{method:'POST'}).then(r=>r.json()).then(d=>{log('cal empty: '+d.success);loadCfg();}).catch(e=>log('cal empty err: '+e));}
+function calFull(){fetch('/api/calibrate/full',{method:'POST'}).then(r=>r.json()).then(d=>{log('cal full: '+d.success);loadCfg();}).catch(e=>log('cal full err: '+e));}
+function toggleMon(){fetch(monitoring?'/api/stop':'/api/start',{method:'POST'}).then(r=>r.json()).then(_=>update()).catch(e=>log('mon err: '+e));}
+function loadCfg(){fetch('/api/config').then(r=>r.json()).then(c=>{scanInt.value=c.scan_interval;infThresh.value=c.inference_threshold;fullThresh.value=(c.full_threshold*100).toFixed(0);document.getElementById('calibrated').textContent=c.calibrated?'Yes':'No';document.getElementById('emptyDist').textContent=c.empty_distance.toFixed(2);document.getElementById('fullDist').textContent=c.full_distance.toFixed(2);}).catch(e=>log('cfg load err: '+e));}
+function saveCfg(){const body={scan_interval:parseFloat(scanInt.value),inference_threshold:parseInt(infThresh.value),full_threshold:parseFloat(fullThresh.value)/100};fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json()).then(_=>log('config saved')).catch(e=>log('cfg save err: '+e));}
+function clearCal(){fetch('/api/clear-calibration',{method:'POST'}).then(r=>r.json()).then(d=>{log('calibration cleared: '+d.success);loadCfg();}).catch(e=>log('clear cal err: '+e));}
+</script>
+</body>
+</html>
